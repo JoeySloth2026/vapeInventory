@@ -59,7 +59,7 @@
         const titleElement = document.getElementById('main-title');
         const today = new Date();
         const options = { year: 'numeric', month: 'long', day: 'numeric' };
-        titleElement.innerText = `Daily Inventory - ${today.toLocaleDateString(undefined, options)}`;
+        titleElement.innerText = `Inventory - ${today.toLocaleDateString(undefined, options)}`;
     }
 
     function render(data) {

@@ -18,16 +18,18 @@
         .accordion-button { font-weight: 600; color: var(--brand-color); background-color: white; }
         .accordion-button:not(.collapsed) { background-color: #e7f1ff; color: #007bff; box-shadow: none; }
         
-        /* Requirement: Green for In-Stock, Red for Out-of-Stock */
+        /* Green for In-Stock, Red for Out-of-Stock */
         .in-stock { color: #198754 !important; font-weight: bold; }
         .out-of-stock { color: #dc3545 !important; font-weight: bold; }
         
         .category-meta { font-weight: normal; font-size: 0.85rem; color: #6c757d; margin-left: 10px; }
-        .update-label { font-size: 1rem; color: #6c757d; font-weight: 400; }
+        .update-label { font-size: 1.1rem; color: #6c757d; font-weight: 400; }
         .hidden { display: none !important; }
         
         /* Loading Spinner */
-        .loader-container { padding: 40px; text-align: center; }
+        .loader-container { padding: 60px; text-align: center; }
+        
+        .table thead th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; color: #7f8c8d; }
     </style>
 </head>
 <body>
@@ -35,18 +37,18 @@
 <div class="container py-5">
     <div class="text-center mb-5">
         <h1 id="main-title" class="display-5 fw-bold mb-1">Daily Inventory</h1>
-        <div id="date-display" class="update-label">🚀 Checking for latest data...</div>
+        <div id="date-display" class="update-label">⏳ Syncing latest data...</div>
     </div>
 
     <div id="inventory-display" class="accordion">
         <div class="loader-container" id="loader">
             <div class="spinner-border text-primary" role="status"></div>
-            <p class="mt-2 text-muted">Fetching inventory.xlsx...</p>
+            <p class="mt-3 text-muted">Reading inventory.xlsx...</p>
         </div>
     </div>
 
     <div class="text-center mt-5">
-        <p class="text-muted small">Page auto-refreshes every 15 minutes to check for updates.</p>
+        <p class="text-muted small">This page auto-refreshes every 15 minutes.</p>
     </div>
 </div>
 
@@ -56,9 +58,9 @@
     const REFRESH_INTERVAL = 15 * 60 * 1000; // 15 Minutes
 
     function loadInventoryData() {
-        console.log("Syncing with " + EXCEL_FILE_NAME + "...");
+        console.log("Fetching fresh data...");
         
-        // Cache Buster: Appending unique timestamp to URL
+        // Cache Buster prevents old data from showing
         fetch(EXCEL_FILE_NAME + '?t=' + new Date().getTime())
             .then(res => {
                 if (!res.ok) throw new Error("File not found");
@@ -66,31 +68,66 @@
             })
             .then(ab => {
                 const data = new Uint8Array(ab);
-                // cellDates: true parses Excel dates into JS date objects
                 const workbook = XLSX.read(data, { type: 'array', cellDates: true });
                 
-                // 1. Get Date from Excel Properties (Created or Modified)
+                // Extract Excel Creation/Modification Date
                 let fileDate = new Date(); 
                 if (workbook.Props) {
                     fileDate = workbook.Props.CreatedDate || workbook.Props.ModifiedDate || new Date();
                 }
-                
                 updateDisplayDate(fileDate);
 
-                // 2. Parse Content
+                // Convert to JSON and Process
                 const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                 const rawData = XLSX.utils.sheet_to_json(firstSheet);
                 
-                // 3. Render
-                render(rawData);
+                const processedData = groupAndSortData(rawData);
+                render(processedData);
+                
                 document.getElementById('loader').classList.add('hidden');
             })
             .catch(err => {
                 console.error(err);
                 document.getElementById('date-display').innerHTML = 
-                    `<span class="text-danger fw-bold">Error: Could not find ${EXCEL_FILE_NAME}</span>`;
+                    `<span class="text-danger fw-bold">Error: inventory.xlsx not found. Check GitHub upload.</span>`;
                 document.getElementById('loader').classList.add('hidden');
             });
+    }
+
+    function groupAndSortData(data) {
+        const groups = [];
+        let currentGroup = null;
+
+        data.forEach(row => {
+            const rawName = String(row['Name'] || '');
+            const variant = String(row['Variant Value'] || '');
+            const qty = parseFloat(row['Free To Use Quantity']) || 0;
+            
+            // Matches parent row ending in (Number)
+            const categoryMatch = rawName.match(/\((\d+)\)\s*$/);
+
+            if (categoryMatch) {
+                currentGroup = {
+                    categoryName: rawName.replace(categoryMatch[0], '').trim(),
+                    skuCount: categoryMatch[1],
+                    totalQty: qty,
+                    variants: []
+                };
+                groups.push(currentGroup);
+            } else if (currentGroup) {
+                currentGroup.variants.push({
+                    name: variant || 'Standard',
+                    qty: qty
+                });
+            }
+        });
+
+        // Alphabetical Sort (A-Z) for items within each category
+        groups.forEach(group => {
+            group.variants.sort((a, b) => a.name.localeCompare(b.name, undefined, {sensitivity: 'base'}));
+        });
+
+        return groups;
     }
 
     function updateDisplayDate(date) {
@@ -99,76 +136,62 @@
             hour: '2-digit', minute: '2-digit'
         };
         const dateString = date.toLocaleDateString(undefined, options);
-        document.getElementById('date-display').innerText = `File Timestamp: ${dateString}`;
+        document.getElementById('date-display').innerText = `Stock Snapshot: ${dateString}`;
     }
 
-    function render(data) {
+    function render(groups) {
         const container = document.getElementById('inventory-display');
-        
-        // Keep the loader in the DOM but hidden, clear other content
         const loader = document.getElementById('loader');
         container.innerHTML = '';
         container.appendChild(loader);
 
         let html = '';
-        let groupCount = 0;
 
-        data.forEach((row) => {
-            const rawName = String(row['Name'] || '');
-            const variant = String(row['Variant Value'] || '');
-            const qty = parseFloat(row['Free To Use Quantity']) || 0;
+        groups.forEach((group, index) => {
+            const groupID = `group${index}`;
+            
+            html += `
+            <div class="accordion-item shadow-sm">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#${groupID}">
+                        <div class="d-flex justify-content-between align-items-center w-100 me-3">
+                            <span>${group.categoryName} <span class="category-meta">(${group.skuCount} items)</span></span>
+                            <span class="badge bg-dark rounded-pill">Total: ${group.totalQty}</span>
+                        </div>
+                    </button>
+                </h2>
+                <div id="${groupID}" class="accordion-collapse collapse">
+                    <div class="accordion-body p-0">
+                        <table class="table mb-0 table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th class="ps-4 py-2 border-0">Product Variant</th>
+                                    <th class="text-end pe-4 py-2 border-0">Available</th>
+                                </tr>
+                            </thead>
+                            <tbody>`;
 
-            // Check if row is a category (Ends with number in parentheses)
-            const categoryMatch = rawName.match(/\((\d+)\)\s*$/);
-
-            if (categoryMatch) {
-                if (groupCount > 0) html += `</tbody></table></div></div></div>`;
-                
-                groupCount++;
-                const countVal = categoryMatch[1];
-                const displayName = rawName.replace(categoryMatch[0], '').trim();
-
-                html += `
-                <div class="accordion-item shadow-sm">
-                    <h2 class="accordion-header">
-                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#group${groupCount}">
-                            <div class="d-flex justify-content-between align-items-center w-100 me-3">
-                                <span>${displayName} <span class="category-meta">(${countVal} SKUs)</span></span>
-                                <span class="badge bg-dark rounded-pill">Total: ${qty}</span>
-                            </div>
-                        </button>
-                    </h2>
-                    <div id="group${groupCount}" class="accordion-collapse collapse">
-                        <div class="accordion-body p-0">
-                            <table class="table mb-0 table-hover">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th class="ps-4 py-2 border-0">Variant</th>
-                                        <th class="text-end pe-4 py-2 border-0">Available</th>
-                                    </tr>
-                                </thead>
-                                <tbody>`;
-            } else if (groupCount > 0) {
-                // Formatting for stock colors
-                const stockClass = qty > 0 ? 'in-stock' : 'out-of-stock';
-                const displayText = qty > 0 ? qty.toLocaleString() : 'Out of Stock';
+            group.variants.forEach(v => {
+                const stockClass = v.qty > 0 ? 'in-stock' : 'out-of-stock';
+                const displayText = v.qty > 0 ? v.qty.toLocaleString() : 'Sold Out';
 
                 html += `
                     <tr>
-                        <td class="ps-4 py-3">${variant || 'Standard'}</td>
+                        <td class="ps-4 py-3">${v.name}</td>
                         <td class="text-end pe-4 py-3 ${stockClass}">${displayText}</td>
                     </tr>`;
-            }
+            });
+
+            html += `</tbody></table></div></div></div>`;
         });
 
-        html += `</tbody></table></div></div></div>`;
         container.innerHTML += html;
     }
 
-    // Initialize
+    // Run on Load
     window.onload = function() {
         loadInventoryData();
-        // Set the 15-minute refresh timer
+        // Keep checking for updates every 15 mins
         setInterval(loadInventoryData, REFRESH_INTERVAL);
     };
 </script>
